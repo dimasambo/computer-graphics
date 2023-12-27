@@ -5,6 +5,7 @@ let surface;                    // A surface model
 let shProgram;                  // A shader program
 let spaceball;                  // A SimpleRotator object that lets the user rotate the view by mouse.
 const { sin, cos, pow, PI } = Math
+let sphere;
 
 function deg2rad(angle) {
     return angle * Math.PI / 180;
@@ -15,12 +16,16 @@ function deg2rad(angle) {
 function Model(name) {
     this.name = name;
     this.iVertexBuffer = gl.createBuffer();
+    this.iNormalBuffer = gl.createBuffer();
     this.count = 0;
 
-    this.BufferData = function (vertices) {
+    this.BufferData = function (vertices, normals) {
 
         gl.bindBuffer(gl.ARRAY_BUFFER, this.iVertexBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STREAM_DRAW);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.iNormalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STREAM_DRAW);
 
         this.count = vertices.length / 3;
     }
@@ -31,7 +36,11 @@ function Model(name) {
         gl.vertexAttribPointer(shProgram.iAttribVertex, 3, gl.FLOAT, false, 0, 0);
         gl.enableVertexAttribArray(shProgram.iAttribVertex);
 
-        gl.drawArrays(gl.LINE_STRIP, 0, this.count);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.iNormalBuffer);
+        gl.vertexAttribPointer(shProgram.iAttribNormal, 3, gl.FLOAT, false, 0, 0);
+        gl.enableVertexAttribArray(shProgram.iAttribNormal);
+
+        gl.drawArrays(gl.TRIANGLES, 0, this.count);
     }
 }
 
@@ -55,7 +64,7 @@ function ShaderProgram(name, program) {
 }
 
 function changed() {
-    surface.BufferData(CreateSurfaceData());
+    surface.BufferData(...CreateSurfaceData());
     draw()
 }
 
@@ -84,18 +93,42 @@ function draw() {
        combined transformation matrix, and send that to the shader program. */
     let modelViewProjection = m4.multiply(projection, matAccum1);
 
+    const normalMatrix = m4.identity();
+    m4.inverse(modelView, normalMatrix);
+    m4.transpose(normalMatrix, normalMatrix);
+
     gl.uniformMatrix4fv(shProgram.iModelViewProjectionMatrix, false, modelViewProjection);
+    gl.uniformMatrix4fv(shProgram.iNormalMatrix, false, normalMatrix);
 
     /* Draw the six faces of a cube, with different colors. */
-    gl.uniform4fv(shProgram.iColor, [1, 1, 0, 1]);
+    gl.uniform4fv(shProgram.iColor, [...hexToRgb(document.getElementById('c').value), 1]);
+    gl.uniform3fv(shProgram.iLightPos, [1 * cos(Date.now() * 0.001), 2 * sin(Date.now() * 0.001), 0]);
 
     surface.Draw();
+    gl.uniformMatrix4fv(shProgram.iModelViewProjectionMatrix, false, m4.multiply(
+        modelViewProjection,
+        m4.translation(1 * cos(Date.now() * 0.001), 2 * sin(Date.now() * 0.001), 0)
+        ));
+        gl.uniform4fv(shProgram.iColor, [1,1,1, 100]);
+    sphere.Draw();
+}
+function animation() {
+    draw()
+    window.requestAnimationFrame(animation)
+}
+function hexToRgb(hex) {
+    var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return [
+        parseInt(result[1], 16) / 255,
+        parseInt(result[2], 16) / 255,
+        parseInt(result[3], 16) / 255]
 }
 let r2 = 1,
     r1 = r2 * 0.5,
     b = 1;
 function CreateSurfaceData() {
     let vertexList = [];
+    let normalList = [];
     const NUM_STEPS_I = parseInt(document.getElementById('numStepsI').value);
     const NUM_STEPS_J = 50;
     r2 = document.getElementById('r2').value
@@ -105,11 +138,74 @@ function CreateSurfaceData() {
     const jst = 2 * PI / NUM_STEPS_J;
     for (let i = 0; i < 2 * b; i += ist) {
         for (let j = 0; j < 2 * PI; j += jst) {
-            vertexList.push(...cyl2(i, j));
+            vertexList.push(
+                ...cyl2(i, j),
+                ...cyl2(i + ist, j),
+                ...cyl2(i, j + jst),
+                ...cyl2(i, j + jst),
+                ...cyl2(i + ist, j),
+                ...cyl2(i + ist, j + jst),
+            );
+            normalList.push(
+                ...normalAnalytical(i, j),
+                ...normalAnalytical(i + ist, j),
+                ...normalAnalytical(i, j + jst),
+                ...normalAnalytical(i, j + jst),
+                ...normalAnalytical(i + ist, j),
+                ...normalAnalytical(i + ist, j + jst),
+            )
         }
     }
 
-    return vertexList;
+    return [vertexList, normalList];
+}
+
+function CreateSphereData() {
+    let vertexList = [];
+
+    let u = 0,
+        t = 0;
+    while (u < Math.PI * 2) {
+        while (t < Math.PI) {
+            let v = getSphereVertex(u, t);
+            let w = getSphereVertex(u + 0.1, t);
+            let wv = getSphereVertex(u, t + 0.1);
+            let ww = getSphereVertex(u + 0.1, t + 0.1);
+            vertexList.push(v.x, v.y, v.z);
+            vertexList.push(w.x, w.y, w.z);
+            vertexList.push(wv.x, wv.y, wv.z);
+            vertexList.push(wv.x, wv.y, wv.z);
+            vertexList.push(w.x, w.y, w.z);
+            vertexList.push(ww.x, ww.y, ww.z);
+            t += 0.1;
+        }
+        t = 0;
+        u += 0.1;
+    }
+    return [vertexList, vertexList];
+}
+const radius = 0.2;
+function getSphereVertex(long, lat) {
+    return {
+        x: radius * Math.cos(long) * Math.sin(lat),
+        y: radius * Math.sin(long) * Math.sin(lat),
+        z: radius * Math.cos(lat)
+    }
+}
+
+const eps = 0.0001
+function normalAnalytical(ii, jj) {
+    let u1 = cyl2(ii, jj),
+        u2 = cyl2(ii + eps, jj),
+        v1 = cyl2(ii, jj),
+        v2 = cyl2(ii, jj + eps);
+    const dU = [], dV = []
+    for (let i = 0; i < 3; i++) {
+        dU.push((u1[i] - u2[i]) / eps)
+        dV.push((v1[i] - v2[i]) / eps)
+    }
+    const n = m4.normalize(m4.cross(dU, dV))
+    return n
 }
 
 function cyl2(a, b) {
@@ -133,11 +229,16 @@ function initGL() {
     shProgram.Use();
 
     shProgram.iAttribVertex = gl.getAttribLocation(prog, "vertex");
+    shProgram.iAttribNormal = gl.getAttribLocation(prog, "normal");
     shProgram.iModelViewProjectionMatrix = gl.getUniformLocation(prog, "ModelViewProjectionMatrix");
+    shProgram.iNormalMatrix = gl.getUniformLocation(prog, "NormalMatrix");
     shProgram.iColor = gl.getUniformLocation(prog, "color");
+    shProgram.iLightPos = gl.getUniformLocation(prog, "lightPos");
 
     surface = new Model('Surface');
-    surface.BufferData(CreateSurfaceData());
+    surface.BufferData(...CreateSurfaceData());
+    sphere = new Model()
+    sphere.BufferData(...CreateSphereData())
 
     gl.enable(gl.DEPTH_TEST);
 }
@@ -203,5 +304,5 @@ function init() {
 
     spaceball = new TrackballRotator(canvas, draw, 0);
 
-    draw();
+    animation();
 }
