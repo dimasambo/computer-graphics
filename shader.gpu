@@ -3,9 +3,68 @@
 // Vertex shader
 const vertexShaderSource = `
 attribute vec3 vertex;
+attribute vec3 normal;
+attribute vec2 texture;
 uniform mat4 ModelViewProjectionMatrix;
+uniform mat4 NormalMatrix;
+varying vec3 n, v;
+varying vec2 t;
+uniform float s;
+uniform vec2 tt;
+
+mat4 translation(float tx, float ty, float tz) {
+    mat4 dst;
+
+    dst[0][0] = 1.0;
+    dst[0][ 1] = 0.0;
+    dst[0][ 2] = 0.0;
+    dst[0][ 3] = 0.0;
+    dst[1][ 0] = 0.0;
+    dst[1][ 1] = 1.0;
+    dst[1][ 2] = 0.0;
+    dst[1][ 3] = 0.0;
+    dst[2][ 0] = 0.0;
+    dst[2][ 1] = 0.0;
+    dst[2][ 2] = 1.0;
+    dst[2][ 3] = 0.0;
+    dst[3][ 0] = tx;
+    dst[3][ 1] = ty;
+    dst[3][ 2] = tz;
+    dst[3][ 3] = 1.0;
+
+    return dst;
+}
+
+mat4 scaling(float s){
+    mat4 dst;
+
+    dst[0][0] = s;
+    dst[0][ 1] = 0.0;
+    dst[0][ 2] = 0.0;
+    dst[0][ 3] = 0.0;
+    dst[1][ 0] = 0.0;
+    dst[1][ 1] = s;
+    dst[1][ 2] = 0.0;
+    dst[1][ 3] = 0.0;
+    dst[2][ 0] = 0.0;
+    dst[2][ 1] = 0.0;
+    dst[2][ 2] = s;
+    dst[2][ 3] = 0.0;
+    dst[3][ 0] = 0.0;
+    dst[3][ 1] = 0.0;
+    dst[3][ 2] = 0.0;
+    dst[3][ 3] = 1.0;
+
+    return dst;
+}
 
 void main() {
+    vec4 t1 = translation(-tt.x,-tt.y,0.0)*vec4(texture,0.,1.);
+    vec4 r1 = scaling(s)*t1;
+    vec4 t2 = translation(tt.x,tt.y,0.0)*r1;
+    t = t2.xy;
+    n=mat3(NormalMatrix)*normal;
+    v=mat3(ModelViewProjectionMatrix)*vertex;
     gl_Position = ModelViewProjectionMatrix * vec4(vertex,1.0);
 }`;
 
@@ -18,7 +77,32 @@ const fragmentShaderSource = `
    precision mediump float;
 #endif
 
+varying vec3 n, v;
+varying vec2 t;
 uniform vec4 color;
+uniform vec3 lightPos;
+uniform sampler2D tmu;
 void main() {
+    vec3 vertPos = v;
+    vec3 N = normalize(n);
+    vec3 L = normalize(lightPos - vertPos);
+    // Lambert's cosine law
+    float lambertian = max(dot(N, L), 0.0);
+    float specular = 0.0;
+    if(lambertian > 0.0) {
+        vec3 R = reflect(-L, N);
+        vec3 V = normalize(-vertPos);
+        // Compute the specular term
+        float specAngle = max(dot(R, V), 0.0);
+        specular = pow(specAngle, 80.0);
+    }
+    vec3 ambientColor = color.xyz*0.1;
+    vec3 specularColor = vec3(1.0);
     gl_FragColor = color;
+    gl_FragColor = vec4(v,1.0);
+    gl_FragColor = vec4(ambientColor +lambertian * color.xyz +specular * specularColor, 1.0);
+    gl_FragColor = texture2D(tmu,t);
+    if(color.a>10.0){
+        gl_FragColor = vec4(1.0);
+    }
 }`;
